@@ -11,7 +11,7 @@ class pinn_collect_dataset():
     A Dataset that generates training data for PINN
     '''
     def __init__(self, num_collect=None, geom=None, time_dim=None,
-                 space_distribution='uniform', time_distribution='uniform', given_data=False,
+                 distribution='uniform', given_data=False,
                  adaptive=None, **kwargs):
 
         '''
@@ -22,8 +22,7 @@ class pinn_collect_dataset():
         :param geom: a list of tuples, where each tuple represents the (min, max) value of a dimension in an order of (x, y, z, (t))
             -If time_dim is True, then the last dimension is the time dimension
         :param time_dim: bool, if there's a time domain
-        :param space_distribution: data distribution method in the spacial dimension(s)
-        :param time_distribution: data distribution method in the time dimension
+        :param distribution: data distribution method in the domain
         :param given_data: bool, use designated data from outside
             If it's True, it will ignore these:
                 :param num_collect, :param num_bc, :param num_ic, :param space_distribution, :param time_distribution
@@ -39,48 +38,60 @@ class pinn_collect_dataset():
 
 
         self.num_collect = num_collect
+        # self.num_bc = num_bc
+        # self.num_ic = num_ic
         self.geom = geom
         self.time_dim = time_dim
-        self.space_distribution = space_distribution
-        self.time_distribution = time_distribution
+        # self.bcs = bcs
+        # self.ics = ics
+        self.distribution = distribution
         self.given_data = given_data
         self.adaptive = adaptive
 
         self.collect_data = None
+        self.boundary_data = None
+
+        # if self.time_dim is True:
+        #     self.initial_data = None
 
         if self.given_data is True:
             self.collect_data = kwargs['collect_data']
+            # self.boundary_data = kwargs['boundary_data']
             assert self.collect_data.shape[1] == len(self.geom)
+            # if self.time_dim is True:
+            #     self.initial_data = kwargs['initial_data']
 
 
     def prepare_collection_data(self):
         if self.given_data is True:
             return self.collect_data #directly
         else:
-            if self.space_distribution == 'uniform':
+            if self.distribution == 'uniform':
                 assert isinstance(self.num_collect, list), "If the space_distribution is 'uniform', a list of int is required"
                 assert len(self.num_collect) == len(self.geom), "The length of the list should be equal to the number of spatial dimensions"
 
+                steps = [(end-start)/num for (start, end), num in zip(self.geom, self.num_collect)]
+
                 grid = np.meshgrid(
-                    *[np.linspace(start, end, num) for (start, end), num in zip(self.geom, self.num_collect)])
+                    *[np.linspace(start+step/2, end-step/2, num) for (start, end), step, num in zip(self.geom, steps, self.num_collect)])
                 collection_data = np.stack([g.ravel() for g in grid], axis=-1)
                 self.collect_data = torch.tensor(collection_data, dtype=torch.float32)
 
-            elif self.space_distribution in ['random', 'LHS', 'Halton', 'Hammersley', 'Sobol']:
+            elif self.distribution in ['random', 'LHS', 'Halton', 'Hammersley', 'Sobol']:
                 assert isinstance(self.num_collect,
                                   int), "For random, LHS, Halton, Hammersley, and Sobol distributions, an int is required"
 
-                if self.space_distribution == 'random':
+                if self.distribution == 'random':
                     collection_data = np.random.uniform(0, 1, (self.num_collect, len(self.geom)))
 
-                elif self.space_distribution == 'LHS':
+                elif self.distribution == 'LHS':
                     collection_data = lhs(len(self.geom), self.num_collect)
 
-                elif self.space_distribution == 'Halton':
+                elif self.distribution == 'Halton':
                     sequencer = ghalton.Halton(len(self.geom))
                     collection_data = np.array(sequencer.get(self.num_collect))
 
-                elif self.space_distribution == 'Hammersley':
+                elif self.distribution == 'Hammersley':
                     def van_der_corput(n, base):
                         vdc, denom = 0, 1
                         while n:
@@ -95,7 +106,7 @@ class pinn_collect_dataset():
                     for j in range(1, d):
                         collection_data[:, j] = np.array([van_der_corput(i, j + 1) for i in range(self.num_collect)])
 
-                elif self.space_distribution == 'Sobol':
+                elif self.distribution == 'Sobol':
                     collection_data = i4_sobol_generate(len(self.geom), self.num_collect)
 
                 # Scale the collected data based on the space_dim
@@ -106,7 +117,11 @@ class pinn_collect_dataset():
 
             else:
                 raise NotImplementedError(
-                    "The space_distribution '{}' is not implemented.".format(self.space_distribution))
+                    "The space_distribution '{}' is not implemented.".format(self.distribution))
 
             return self.collect_data
+
+
+
+
 
